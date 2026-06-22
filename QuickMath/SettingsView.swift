@@ -1,122 +1,108 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @EnvironmentObject var appModel: AppModel
     @EnvironmentObject var store: Store
+    @EnvironmentObject var appModel: AppModel
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("quickmath.theme") private var themeRaw = AppTheme.system.rawValue
-    @AppStorage("quickmath.reminderOn") private var reminderOn = false
-    @AppStorage("quickmath.reminderHour") private var reminderHour = 9
-    @AppStorage("quickmath.reminderMinute") private var reminderMinute = 0
-
     @State private var showPaywall = false
     @State private var showDeleteConfirm = false
-    @State private var restoreMessage: String?
 
-    private var version: String {
-        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        return "Lattice \(v)"
-    }
-
-    private var reminderTime: Binding<Date> {
-        Binding(
-            get: { Calendar.current.date(from: DateComponents(hour: reminderHour, minute: reminderMinute)) ?? Date() },
-            set: { newValue in
-                let c = Calendar.current.dateComponents([.hour, .minute], from: newValue)
-                reminderHour = c.hour ?? 9
-                reminderMinute = c.minute ?? 0
-                if reminderOn { Reminders.schedule(hour: reminderHour, minute: reminderMinute) }
-            }
-        )
+    private var theme: AppTheme {
+        get { AppTheme(rawValue: themeRaw) ?? .system }
+        set { themeRaw = newValue.rawValue }
     }
 
     var body: some View {
         NavigationStack {
-            Form {
-                proSection
-                appearanceSection
-                gridSection
-                aboutSection
+            ZStack {
+                QMBackground()
+                List {
+                    // Pro status
+                    Section("Subscription") {
+                        if store.isPro {
+                            HStack {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .foregroundStyle(Color.qmAccent)
+                                Text("Cooldown Pro Active")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            Link("Manage Subscription", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                                .foregroundStyle(Color.qmAccent)
+                        } else {
+                            Button("Upgrade to Cooldown Pro") { showPaywall = true }
+                                .foregroundStyle(Color.qmAccent)
+                        }
+                        Button("Restore Purchases") {
+                            Task { await store.restore() }
+                        }
+                        .foregroundStyle(Color.qmAccent)
+                    }
+
+                    // Default cooldown
+                    Section("Defaults") {
+                        Stepper("Default Cooldown: \(appModel.defaultCooldownDays) days",
+                                value: Binding(
+                                    get: { appModel.defaultCooldownDays },
+                                    set: { appModel.updateDefaultCooldown($0) }
+                                ),
+                                in: 1...90)
+                    }
+
+                    // Appearance
+                    Section("Appearance") {
+                        Picker("Theme", selection: $themeRaw) {
+                            ForEach(AppTheme.allCases) { t in
+                                Text(t.label).tag(t.rawValue)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    // Legal
+                    Section("Legal") {
+                        Link("Privacy Policy", destination: URL(string: "https://shimondeitel.github.io/cooldown-site/privacy.html")!)
+                            .foregroundStyle(Color.qmAccent)
+                        Link("Terms of Use", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
+                            .foregroundStyle(Color.qmAccent)
+                    }
+
+                    // Data
+                    Section("Data") {
+                        Button(role: .destructive) {
+                            showDeleteConfirm = true
+                        } label: {
+                            Label("Delete All Data", systemImage: "trash")
+                        }
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
-            .tint(Color.qmAccent)
-            .sheet(isPresented: $showPaywall) { PaywallView() }
-            .alert("Erase Progress?", isPresented: $showDeleteConfirm) {
-                Button("Erase", role: .destructive) { appModel.deleteAllData(); dismiss() }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Color.qmAccent)
+                }
+            }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView()
+                    .environmentObject(store)
+            }
+            .confirmationDialog(
+                "Delete All Data",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Everything", role: .destructive) {
+                    appModel.deleteAllData()
+                    dismiss()
+                }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This permanently erases your solved grids and streak on this device. This can't be undone.")
+                Text("This will permanently delete all your wish items, skip history, and settings. This cannot be undone.")
             }
-        }
-    }
-
-    @ViewBuilder
-    private var proSection: some View {
-        Section {
-            if store.isPro {
-                HStack {
-                    Label("Lattice Pro", systemImage: "sparkles")
-                    Spacer(); Text("Active").foregroundStyle(.secondary)
-                }
-            } else {
-                Button { Haptics.tap(); showPaywall = true } label: {
-                    HStack {
-                        Label("Start Lattice Pro", systemImage: "sparkles")
-                        Spacer(); Text("\(store.displayPrice)/mo").foregroundStyle(.secondary)
-                    }
-                }
-                Button("Restore Purchase") {
-                    Task {
-                        await store.restore()
-                        restoreMessage = store.isPro ? "Restored." : "No active subscription found."
-                    }
-                }
-                if let restoreMessage { Text(restoreMessage).font(.footnote).foregroundStyle(.secondary) }
-            }
-        } footer: {
-            if !store.isPro {
-                Text("$0.99/month subscription. The expert daily grid, the full archive of past grids, hints and themes. Auto-renews until canceled.")
-            }
-        }
-    }
-
-    private var appearanceSection: some View {
-        Section("Appearance") {
-            Picker("Theme", selection: $themeRaw) {
-                ForEach(AppTheme.allCases) { Text($0.label).tag($0.rawValue) }
-            }
-            .pickerStyle(.segmented)
-        }
-    }
-
-    private var gridSection: some View {
-        Section("Daily grid") {
-            Toggle("Daily reminder", isOn: $reminderOn)
-                .onChange(of: reminderOn) { _, on in
-                    if on {
-                        Task {
-                            let granted = await Reminders.requestAuthorization()
-                            if granted { Reminders.schedule(hour: reminderHour, minute: reminderMinute) }
-                            else { reminderOn = false }
-                        }
-                    } else { Reminders.cancel() }
-                }
-            if reminderOn {
-                DatePicker("Time", selection: reminderTime, displayedComponents: .hourAndMinute)
-            }
-        }
-    }
-
-    private var aboutSection: some View {
-        Section {
-            Button("Erase Progress", role: .destructive) { showDeleteConfirm = true }
-            Link("Terms of Use", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
-            Link("Privacy Policy", destination: URL(string: "https://shimondeitel.github.io/lattice-site/privacy.html")!)
-        } footer: {
-            Text(version).frame(maxWidth: .infinity, alignment: .center).padding(.top, 4)
         }
     }
 }

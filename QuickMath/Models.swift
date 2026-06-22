@@ -1,141 +1,191 @@
-import Foundation
+import SwiftUI
 import SwiftData
 
-/// One logic-grid puzzle: people (rows) matched one-to-one to an ordered attribute (cols),
-/// pinned down by a set of clues. `solution[r]` is the column index for row r.
-struct Puzzle: Codable, Identifiable, Equatable {
-    let id: Int
-    let size: Int
-    let rowCategory: String
-    let colCategory: String
-    let rows: [String]
-    let cols: [String]
-    let solution: [Int]
-    let clues: [String]
+// MARK: - Decision enum
+enum ItemDecision: String, Codable {
+    case waiting
+    case bought
+    case skipped
 }
 
-/// The bundled puzzle bank. Daily puzzles are size 5; expert (Pro) are size 6. The puzzle for a
-/// given day is chosen deterministically from the date, so everyone gets the same one.
-enum PuzzleBank {
-    private struct Bank: Codable { let version: Int; let puzzles: [Puzzle] }
+// MARK: - SwiftData Models
 
-    static let all: [Puzzle] = load()
-    static var daily: [Puzzle] { all.filter { $0.size == 5 } }
-    static var expert: [Puzzle] { all.filter { $0.size == 6 } }
-
-    private static func load() -> [Puzzle] {
-        guard let url = Bundle.main.url(forResource: "lattice_puzzles", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let bank = try? JSONDecoder().decode(Bank.self, from: data) else { return [] }
-        return bank.puzzles
-    }
-
-    /// Days since the epoch, used as a stable per-day index.
-    private static func epochDay(_ date: Date) -> Int {
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: date)
-        return Int((start.timeIntervalSince1970 / 86_400).rounded(.down))
-    }
-
-    static func index(for date: Date, count: Int) -> Int {
-        guard count > 0 else { return 0 }
-        let d = epochDay(date)
-        return ((d % count) + count) % count
-    }
-
-    static func today(for date: Date = .now) -> Puzzle? {
-        let d = daily; guard !d.isEmpty else { return nil }
-        return d[index(for: date, count: d.count)]
-    }
-
-    static func expertToday(for date: Date = .now) -> Puzzle? {
-        let e = expert; guard !e.isEmpty else { return nil }
-        return e[index(for: date, count: e.count)]
-    }
-
-    /// The daily puzzle for a day N days back (Pro archive).
-    static func daily(daysAgo: Int, from date: Date = .now) -> Puzzle? {
-        let d = daily; guard !d.isEmpty else { return nil }
-        let day = Calendar.current.date(byAdding: .day, value: -daysAgo, to: date) ?? date
-        return d[index(for: day, count: d.count)]
-    }
-
-    static func dateKey(for date: Date = .now) -> String {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", c.year ?? 2026, c.month ?? 1, c.day ?? 1)
-    }
-}
-
-/// A single cell's mark in the grid.
-enum Mark: Int { case blank = 0, yes, no }
-
-/// Mutable state for one play session: an n×n grid of marks plus solve detection.
-final class GridState: ObservableObject {
-    let puzzle: Puzzle
-    @Published var marks: [[Mark]]
-    @Published var hintedRow: Int? = nil
-
-    init(_ p: Puzzle) {
-        puzzle = p
-        marks = Array(repeating: Array(repeating: .blank, count: p.size), count: p.size)
-    }
-
-    /// Tap cycles blank → yes → no → blank. Placing a YES auto-marks the rest of that row and
-    /// column NO (one-to-one matching), the way players naturally fill a logic grid.
-    func cycle(_ r: Int, _ c: Int) {
-        let n = puzzle.size
-        let next: Mark = marks[r][c] == .blank ? .yes : (marks[r][c] == .yes ? .no : .blank)
-        marks[r][c] = next
-        if next == .yes {
-            for cc in 0..<n where cc != c && marks[r][cc] != .no { marks[r][cc] = .no }
-            for rr in 0..<n where rr != r && marks[rr][c] != .no { marks[rr][c] = .no }
-        }
-        objectWillChange.send()
-    }
-
-    /// Reveal one correct cell the player hasn't placed yet (Pro hint).
-    func revealHint() {
-        let n = puzzle.size
-        for r in 0..<n where marks[r][puzzle.solution[r]] != .yes {
-            for c in 0..<n { marks[r][c] = (c == puzzle.solution[r]) ? .yes : .no }
-            hintedRow = r
-            objectWillChange.send()
-            return
-        }
-    }
-
-    var placedCount: Int {
-        (0..<puzzle.size).reduce(0) { acc, r in
-            acc + ((0..<puzzle.size).contains { marks[r][$0] == .yes } ? 1 : 0)
-        }
-    }
-
-    var isComplete: Bool { placedCount == puzzle.size }
-
-    var isSolved: Bool {
-        for r in 0..<puzzle.size {
-            let yes = (0..<puzzle.size).filter { marks[r][$0] == .yes }
-            if yes.count != 1 || yes[0] != puzzle.solution[r] { return false }
-        }
-        return true
-    }
-}
-
-/// One recorded attempt at a daily (or expert) grid. Local-only; defaults + no unique constraints
-/// keep it CloudKit-compatible if sync is ever added.
 @Model
-final class LatticeResult {
-    var id: UUID = UUID()
-    var dateKey: String = ""
-    var puzzleId: Int = 0
-    var solved: Bool = false
-    var seconds: Double = 0
-    var isExpert: Bool = false
-    var date: Date = Date.now
+final class WishItem {
+    var id: UUID
+    var title: String
+    var price: Double
+    var addedDate: Date
+    var cooldownDays: Int
+    var decision: String  // ItemDecision.rawValue
+    var decidedDate: Date?
+    var note: String
 
-    init(id: UUID = UUID(), dateKey: String = "", puzzleId: Int = 0,
-         solved: Bool = false, seconds: Double = 0, isExpert: Bool = false, date: Date = .now) {
-        self.id = id; self.dateKey = dateKey; self.puzzleId = puzzleId
-        self.solved = solved; self.seconds = seconds; self.isExpert = isExpert; self.date = date
+    init(title: String, price: Double, cooldownDays: Int = 7, note: String = "") {
+        self.id = UUID()
+        self.title = title
+        self.price = price
+        self.addedDate = Date()
+        self.cooldownDays = cooldownDays
+        self.decision = ItemDecision.waiting.rawValue
+        self.decidedDate = nil
+        self.note = note
+    }
+
+    var itemDecision: ItemDecision {
+        get { ItemDecision(rawValue: decision) ?? .waiting }
+        set { decision = newValue.rawValue }
+    }
+
+    var cooldownEndsAt: Date {
+        Calendar.current.date(byAdding: .day, value: cooldownDays, to: addedDate) ?? addedDate
+    }
+
+    var isReady: Bool {
+        Date() >= cooldownEndsAt
+    }
+
+    var daysRemaining: Int {
+        let diff = Calendar.current.dateComponents([.day], from: Date(), to: cooldownEndsAt).day ?? 0
+        return max(0, diff)
+    }
+
+    var progressFraction: Double {
+        let total = Double(cooldownDays) * 86400
+        let elapsed = Date().timeIntervalSince(addedDate)
+        return min(1.0, max(0.0, elapsed / total))
+    }
+}
+
+@Model
+final class SkipRecord {
+    var id: UUID
+    var itemTitle: String
+    var amountSaved: Double
+    var date: Date
+
+    init(itemTitle: String, amountSaved: Double, date: Date = Date()) {
+        self.id = UUID()
+        self.itemTitle = itemTitle
+        self.amountSaved = amountSaved
+        self.date = date
+    }
+}
+
+@Model
+final class CooldownSettings {
+    var id: UUID
+    var defaultCooldownDays: Int
+
+    init(defaultCooldownDays: Int = 7) {
+        self.id = UUID()
+        self.defaultCooldownDays = defaultCooldownDays
+    }
+}
+
+// MARK: - AppModel
+
+@MainActor
+final class AppModel: ObservableObject {
+    let container: ModelContainer
+    weak var store: Store?
+
+    @Published private(set) var waitingItems: [WishItem] = []
+    @Published private(set) var decidedItems: [WishItem] = []
+    @Published private(set) var skipRecords: [SkipRecord] = []
+    @Published private(set) var totalSaved: Double = 0
+    @Published private(set) var defaultCooldownDays: Int = 7
+
+    init(container: ModelContainer) {
+        self.container = container
+        reload()
+    }
+
+    static func makeContainer() -> ModelContainer {
+        let schema = Schema([WishItem.self, SkipRecord.self, CooldownSettings.self])
+        do {
+            return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema)])
+        } catch {
+            let cfg = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            return (try? ModelContainer(for: schema, configurations: [cfg])) ?? {
+                fatalError("Cannot create ModelContainer: \(error)")
+            }()
+        }
+    }
+
+    func reload() {
+        let ctx = container.mainContext
+        let allItems = (try? ctx.fetch(FetchDescriptor<WishItem>(sortBy: [SortDescriptor(\.addedDate, order: .reverse)]))) ?? []
+        waitingItems = allItems.filter { $0.itemDecision == .waiting }
+        decidedItems = allItems.filter { $0.itemDecision != .waiting }
+
+        let records = (try? ctx.fetch(FetchDescriptor<SkipRecord>(sortBy: [SortDescriptor(\.date, order: .reverse)]))) ?? []
+        skipRecords = records
+        totalSaved = records.reduce(0) { $0 + $1.amountSaved }
+
+        let settings = (try? ctx.fetch(FetchDescriptor<CooldownSettings>())) ?? []
+        if let s = settings.first {
+            defaultCooldownDays = s.defaultCooldownDays
+        }
+    }
+
+    func refresh() { reload() }
+
+    func addItem(title: String, price: Double, cooldownDays: Int, note: String = "") {
+        let item = WishItem(title: title, price: price, cooldownDays: cooldownDays, note: note)
+        container.mainContext.insert(item)
+        try? container.mainContext.save()
+        Haptics.success()
+        reload()
+    }
+
+    func decide(_ item: WishItem, decision: ItemDecision) {
+        item.itemDecision = decision
+        item.decidedDate = Date()
+        if decision == .skipped {
+            let record = SkipRecord(itemTitle: item.title, amountSaved: item.price)
+            container.mainContext.insert(record)
+            Haptics.success()
+        } else {
+            Haptics.tap()
+        }
+        try? container.mainContext.save()
+        reload()
+    }
+
+    func deleteItem(_ item: WishItem) {
+        container.mainContext.delete(item)
+        try? container.mainContext.save()
+        reload()
+    }
+
+    func updateDefaultCooldown(_ days: Int) {
+        let ctx = container.mainContext
+        let settings = (try? ctx.fetch(FetchDescriptor<CooldownSettings>())) ?? []
+        if let s = settings.first {
+            s.defaultCooldownDays = days
+        } else {
+            ctx.insert(CooldownSettings(defaultCooldownDays: days))
+        }
+        try? ctx.save()
+        reload()
+    }
+
+    func deleteAllData() {
+        let ctx = container.mainContext
+        let items = (try? ctx.fetch(FetchDescriptor<WishItem>())) ?? []
+        for i in items { ctx.delete(i) }
+        let records = (try? ctx.fetch(FetchDescriptor<SkipRecord>())) ?? []
+        for r in records { ctx.delete(r) }
+        try? ctx.save()
+        reload()
+    }
+
+    // Formatting helpers
+    func formatCurrency(_ amount: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.maximumFractionDigits = 2
+        return f.string(from: NSNumber(value: amount)) ?? "$\(String(format: "%.2f", amount))"
     }
 }

@@ -18,9 +18,9 @@
   },
   "subscriptionGroups": [
     {
-      "id": "lattice_pro_group",
+      "id": "cooldown_pro_group",
       "localizations": [],
-      "name": "Lattice Pro",
+      "name": "Cooldown Pro",
       "subscriptions": [
         {
           "adHocOffers": [],
@@ -28,19 +28,19 @@
           "displayPrice": "0.99",
           "familyShareable": false,
           "groupNumber": 1,
-          "internalID": "lattice_pro_monthly_id",
+          "internalID": "cooldown_pro_monthly_id",
           "introductoryOffer": null,
           "localizations": [
             {
-              "description": "The full daily logic-grid archive, an expert grid each day, bigger grids, hints and themes.",
-              "displayName": "Lattice Pro",
+              "description": "History, reminders, CSV export & annual recap",
+              "displayName": "Cooldown Pro",
               "locale": "en_US"
             }
           ],
-          "productID": "lattice_pro_monthly",
+          "productID": "cooldown_pro_monthly",
           "recurringSubscriptionPeriod": "P1M",
-          "referenceName": "Lattice Pro Monthly",
-          "subscriptionGroupID": "lattice_pro_group",
+          "referenceName": "Cooldown Pro Monthly",
+          "subscriptionGroupID": "cooldown_pro_group",
           "type": "RecurringSubscription"
         }
       ]
